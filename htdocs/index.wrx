@@ -47,6 +47,7 @@
         <link rel="stylesheet" type="text/css" href="nanoscroller.css" />
         <link rel="stylesheet" type="text/css" href="openwebrx.css" />
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no" />
     </head>
     <body onload="openwebrx_init();">
 <div id="webrx-page-container">
