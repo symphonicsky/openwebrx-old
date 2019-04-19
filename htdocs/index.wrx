@@ -47,6 +47,7 @@
         <link rel="stylesheet" type="text/css" href="nanoscroller.css" />
         <link rel="stylesheet" type="text/css" href="openwebrx.css" />
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no" />
     </head>
     <body onload="openwebrx_init();">
 <div id="webrx-page-container">
@@ -88,7 +89,7 @@
             </div>
             <div id="openwebrx-panels-container">
                 <div class="openwebrx-panel" id="openwebrx-panel-receiver" data-panel-name="client-params" data-panel-pos="right" data-panel-order="0" data-panel-size="259,115">
-                    <div id="webrx-actual-freq">---.--- MHz</div>
+                    <div id="webrx-actual-freq"><span onclick="click_center_freq()">---.--- MHz</span></div>
                     <div id="webrx-mouse-freq">---.--- MHz</div>
                     <div class="openwebrx-panel-line">
                         <div class="openwebrx-button openwebrx-demodulator-button" id="openwebrx-button-nfm" 
@@ -108,6 +109,10 @@
                             <option value="none"></option>
                             <option value="bpsk31">BPSK31</option>
                         </select>
+                    </div>
+                    <div class="openwebrx-panel-line">
+                        <div title="Auto-set gain level" id="openwebrx-gain-default" class="openwebrx-button">Gain</div>
+                        <input title="gain" id="openwebrx-panel-gain" class="openwebrx-panel-slider" type="range" min="0" max="29" value="5" step="1" onchange="update_gain()" oninput="update_gain()">
                     </div>
                     <div class="openwebrx-panel-line">
                         <div title="Mute on/off" id="openwebrx-mute-off" class="openwebrx-button" onclick="toggleMute();"><img src="gfx/openwebrx-speaker.png" class="openwebrx-sliderbtn-img" id="openwebrx-mute-img"></div>

@@ -545,7 +545,7 @@ function demodulator_default_analog(offset_frequency,subtype)
 		mkenvelopes(this.visible_range);
 		this.parent.set();
 		//will have to change this when changing to multi-demodulator mode:
-		e("webrx-actual-freq").innerHTML=format_frequency("{x} MHz",center_freq+this.parent.offset_frequency,1e6,4);
+		set_actual_display_freq(center_freq+this.parent.offset_frequency);
 		return true;
 	};
 
@@ -622,7 +622,8 @@ var scale_canvas;
 
 function scale_setup()
 {
-	e("webrx-actual-freq").innerHTML=format_frequency("{x} MHz",canvas_get_frequency(window.innerWidth/2),1e6,4);
+	set_actual_display_freq(canvas_get_frequency(window.innerWidth/2));
+	//e("webrx-actual-freq").innerHTML=format_frequency("{x} MHz",,1e6,4);
 	scale_canvas=e("openwebrx-scale-canvas");
 	scale_ctx=scale_canvas.getContext("2d");
 	scale_canvas.addEventListener("mousedown", scale_canvas_mousedown, false);
@@ -974,7 +975,9 @@ function canvas_mousemove(evt)
 			mkscale();
 		}
 	}
-	else e("webrx-mouse-freq").innerHTML=format_frequency("{x} MHz",canvas_get_frequency(relativeX),1e6,4);
+	else {
+		e("webrx-mouse-freq").innerHTML=format_frequency("{x} MHz",canvas_get_frequency(relativeX),1e6,4);
+	}
 }
 
 function canvas_container_mouseout(evt)
@@ -994,7 +997,7 @@ function canvas_mouseup(evt)
 	{
 		//ws.send("SET offset_freq="+canvas_get_freq_offset(relativeX).toString());
 		demodulator_set_offset_frequency(0, canvas_get_freq_offset(relativeX));
-		e("webrx-actual-freq").innerHTML=format_frequency("{x} MHz",canvas_get_frequency(relativeX),1e6,4);
+		set_actual_display_freq(canvas_get_frequency(relativeX));
 	}
 	else
 	{
@@ -1656,7 +1659,7 @@ function audio_init()
 	if(starting_offset_frequency)
 	{
 		demodulators[0].offset_frequency = starting_offset_frequency;
-		e("webrx-actual-freq").innerHTML=format_frequency("{x} MHz",center_freq+starting_offset_frequency,1e6,4);
+		set_actual_display_freq(center_freq+starting_offset_frequency);
 		demodulators[0].set();
 		mkscale();
 	}
@@ -1671,6 +1674,35 @@ function audio_init()
 		}
 	},2000);
 
+}
+
+function set_actual_display_freq(freqvalue){
+	e("webrx-actual-freq").innerHTML="<span onclick='click_center_freq()'>" + format_frequency("{x} MHz",freqvalue,1e6,4) + "</span>";
+}
+
+function update_center_freq(freqvalue)
+{
+	center_freq = freqvalue;
+	set_actual_display_freq(freqvalue);
+	//var sliderValue=parseInt(e("openwebrx-panel-squelch").value);
+	//var outputValue=(sliderValue==parseInt(e("openwebrx-panel-squelch").min))?0:getLinearSmeterValue(sliderValue);
+	demodulator_set_offset_frequency(0, 0);
+	webrx_set_param("center_freq",freqvalue);
+	mkscale();
+	//ws.send("SET squelch_level="+outputValue.toString());
+}
+function update_gain()
+{
+	webrx_set_param("gain",parseInt(e("openwebrx-panel-gain").value));
+}
+// onkeydown="search(this)"
+function click_center_freq(){
+	e("webrx-actual-freq").innerHTML="<input onkeydown='click_center_freq_input(this)' name='center_freq' type='text' value='" + center_freq + "'/>";
+}
+function click_center_freq_input(ele){
+    if(event.key === 'Enter') {
+        update_center_freq(parseInt(ele.value))      
+    }
 }
 
 function on_ws_closed()
