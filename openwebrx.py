@@ -44,6 +44,7 @@ import traceback
 from collections import namedtuple
 import Queue
 import ctypes
+import rtltcp_client
 
 #import rtl_mus
 import rxws
@@ -77,7 +78,7 @@ class MultiThreadHTTPServer(ThreadingMixIn, HTTPServer):
     pass
 
 def handle_signal(sig, frame):
-    global spectrum_dsp
+    global spectrum_dsp, rtl_mus_process, rtl_process, rtl_thread, rtl_mus_thread
     if sig == signal.SIGUSR1:
         print "[openwebrx] Verbose status information on USR1 signal"
         print
@@ -98,6 +99,8 @@ def handle_signal(sig, frame):
         print "[openwebrx] Ctrl+C: aborting."
         cleanup_clients(True)
         spectrum_dsp.stop()
+        rtl_mus_thread.join()
+        rtl_thread.join()
         os._exit(1) #not too graceful exit
 
 def access_log(data):
@@ -109,7 +112,7 @@ receiver_failed=spectrum_thread_watchdog_last_tick=rtl_thread=spectrum_dsp=serve
 
 def main():
     global clients, clients_mutex, pypy, lock_try_time, avatar_ctime, cfg, logs
-    global serverfail, rtl_thread
+    global serverfail, rtl_thread, rtl_mus_process, rtl_process, rtl_mus_thread, current_center_freq
     print
     print "OpenWebRX - Open Source SDR Web App for Everyone!  | for license see LICENSE file in the package"
     print "_________________________________________________________________________________________________"
@@ -144,25 +147,19 @@ def main():
     except:
         pass
 
+    current_center_freq = cfg.center_freq
     #Start rtl thread
     if os.system("csdr 2> /dev/null") == 32512: #check for csdr
         print "[openwebrx-main] You need to install \"csdr\" to run OpenWebRX!\n"
         return
-    if os.system("nmux --help 2> /dev/null") == 32512: #check for nmux
-        print "[openwebrx-main] You need to install an up-to-date version of \"csdr\" that contains the \"nmux\" tool to run OpenWebRX! Please upgrade \"csdr\"!\n"
-        return
     if cfg.start_rtl_thread:
-        nmux_bufcnt = nmux_bufsize = 0
-        while nmux_bufsize < cfg.samp_rate/4: nmux_bufsize += 4096
-        while nmux_bufsize * nmux_bufcnt < cfg.nmux_memory * 1e6: nmux_bufcnt += 1
-        if nmux_bufcnt == 0 or nmux_bufsize == 0: 
-            print "[openwebrx-main] Error: nmux_bufsize or nmux_bufcnt is zero. These depend on nmux_memory and samp_rate options in config_webrx.py"
-            return
-        print "[openwebrx-main] nmux_bufsize = %d, nmux_bufcnt = %d" % (nmux_bufsize, nmux_bufcnt)
-        cfg.start_rtl_command += "| nmux --bufsize %d --bufcnt %d --port %d --address 127.0.0.1" % (nmux_bufsize, nmux_bufcnt, cfg.iq_server_port)
-        rtl_thread=threading.Thread(target = lambda:subprocess.Popen(cfg.start_rtl_command, shell=True),  args=())
+        rtl_thread=threading.Thread(target = rtl_thread_function, args=())
         rtl_thread.start()
         print "[openwebrx-main] Started rtl_thread: "+cfg.start_rtl_command
+    #Run rtl_mus.py in a different OS thread
+    rtl_mus_thread=threading.Thread(target = rtl_mus_thread_function, args=())
+    rtl_mus_thread.start() # The new feature in GNU Radio 3.7: top_block() locks up ALL python threads until it gets the TCP connection.
+    print "[openwebrx-main] Started rtl_mus."
     print "[openwebrx-main] Waiting for I/Q server to start..."
     while True:
         testsock=socket.socket()
@@ -213,7 +210,16 @@ def main():
     access_log("Starting OpenWebRX...")
     httpd.serve_forever()
 
-
+def rtl_mus_thread_function():
+    global rtl_mus_process
+    python_command="python2.7"
+    rtl_mus_cmd = python_command+" rtl_mus.py config_rtl"
+    rtl_mus_process = subprocess.Popen(rtl_mus_cmd, shell=True)
+    rtl_mus_process.communicate()
+def rtl_thread_function():
+    global rtl_process
+    rtl_process = subprocess.Popen(cfg.start_rtl_command, shell=True)
+    rtl_process.communicate()
 # This is a debug function below:
 measure_value=0
 def measure_thread_function():
@@ -414,7 +420,7 @@ class WebRXHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        global dsp_plugin, clients_mutex, clients, avatar_ctime, sw_version, receiver_failed
+        global dsp_plugin, clients_mutex, clients, avatar_ctime, sw_version, receiver_failed, current_center_freq
         rootdir = 'htdocs'
         self.path=self.path.replace("..","")
         path_temp_parts=self.path.split("?")
@@ -457,7 +463,7 @@ class WebRXHandler(BaseHTTPRequestHandler):
                         return
                     myclient.ws_started=True
                     #send default parameters
-                    rxws.send(self, "MSG center_freq={0} bandwidth={1} fft_size={2} fft_fps={3} audio_compression={4} fft_compression={5} max_clients={6} setup".format(str(cfg.shown_center_freq),str(cfg.samp_rate),cfg.fft_size,cfg.fft_fps,cfg.audio_compression,cfg.fft_compression,cfg.max_clients))
+                    rxws.send(self, "MSG center_freq={0} bandwidth={1} fft_size={2} fft_fps={3} audio_compression={4} fft_compression={5} max_clients={6} setup".format(str(current_center_freq),str(cfg.samp_rate),cfg.fft_size,cfg.fft_fps,cfg.audio_compression,cfg.fft_compression,cfg.max_clients))
 
                     # ========= Initialize DSP =========
                     dsp=csdr.dsp()
@@ -552,7 +558,16 @@ class WebRXHandler(BaseHTTPRequestHandler):
                                 filter_limit=dsp.get_output_rate()/2
                                 for pair in pairs:
                                     param_name, param_value = pair.split("=")
-                                    if param_name == "low_cut" and -filter_limit <= int(param_value) <= filter_limit:
+                                    if param_name == "center_freq" and int(param_value) >= 0:
+                                        myclient.loopstat=500
+                                        current_center_freq = int(param_value)
+                                        sdr = rtltcp_client.client()
+                                        sdr.set_freq(current_center_freq)
+                                    elif param_name == "gain" and int(param_value) >= 0:
+                                        myclient.loopstat=501
+                                        sdr = rtltcp_client.client()
+                                        sdr.tunergain(int(param_value))
+                                    elif param_name == "low_cut" and -filter_limit <= int(param_value) <= filter_limit:
                                         bpf_set=True
                                         new_bpf[0]=int(param_value)
                                     elif param_name == "high_cut" and -filter_limit <= int(param_value) <= filter_limit:
@@ -637,7 +652,7 @@ class WebRXHandler(BaseHTTPRequestHandler):
                 return
             elif self.path in ("/status", "/status/"):
                 #self.send_header('Content-type','text/plain')
-                getbands=lambda: str(int(cfg.shown_center_freq-cfg.samp_rate/2))+"-"+str(int(cfg.shown_center_freq+cfg.samp_rate/2))
+                getbands=lambda: str(int(current_center_freq-cfg.samp_rate/2))+"-"+str(int(current_center_freq+cfg.samp_rate/2))
                 self.wfile.write("status="+("inactive" if receiver_failed else "active")+"\nname="+cfg.receiver_name+"\nsdr_hw="+cfg.receiver_device+"\nop_email="+cfg.receiver_admin+"\nbands="+getbands()+"\nusers="+str(len(clients))+"\nusers_max="+str(cfg.max_clients)+"\navatar_ctime="+avatar_ctime+"\ngps="+str(cfg.receiver_gps)+"\nasl="+str(cfg.receiver_asl)+"\nloc="+cfg.receiver_location+"\nsw_version="+sw_version+"\nantenna="+cfg.receiver_ant+"\n")
                 print "[openwebrx-httpd] GET /status/ from",self.client_address[0]
             else:
@@ -681,7 +696,7 @@ class WebRXHandler(BaseHTTPRequestHandler):
                         ("%[RX_ANT]",cfg.receiver_ant),
                         ("%[RX_DEVICE]",cfg.receiver_device),
                         ("%[AUDIO_BUFSIZE]",str(cfg.client_audio_buffer_size)),
-                        ("%[START_OFFSET_FREQ]",str(cfg.start_freq-cfg.center_freq)),
+                        ("%[START_OFFSET_FREQ]",str(0)),
                         ("%[START_MOD]",cfg.start_mod),
                         ("%[WATERFALL_COLORS]",cfg.waterfall_colors),
                         ("%[WATERFALL_MIN_LEVEL]",str(cfg.waterfall_min_level)),
